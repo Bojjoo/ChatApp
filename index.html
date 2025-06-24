@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EduConnect Chat</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #1e1e2e;
+      color: white;
+      display: flex;
+      height: 100vh;
+    }
+    .sidebar {
+      width: 260px;
+      background: #2b2d42;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      overflow-y: auto;
+      border-right: 1px solid #3a3c56;
+    }
+    .sidebar h2 {
+      font-size: 1.1rem;
+      color: #a0a0cc;
+      margin-bottom: 0.5rem;
+    }
+    .conversation, .user {
+      padding: 0.5rem 0.75rem;
+      border-radius: 8px;
+      background: #393b5b;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .conversation:hover, .user:hover {
+      background: #4a4d73;
+    }
+    .chat-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .chat-header {
+      padding: 1rem;
+      background: #2b2d42;
+      font-size: 1.2rem;
+      font-weight: bold;
+      border-bottom: 1px solid #3a3c56;
+    }
+    .chat-messages {
+      flex: 1;
+      padding: 1rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .message {
+      padding: 0.6rem 1rem;
+      background: #383a5a;
+      border-radius: 12px;
+      align-self: flex-start;
+      max-width: 70%;
+      word-wrap: break-word;
+    }
+    .message.you {
+      background: #5b5bdc;
+      align-self: flex-end;
+    }
+    .chat-input {
+      display: flex;
+      padding: 1rem;
+      background: #2b2d42;
+      border-top: 1px solid #3a3c56;
+    }
+    .chat-input input {
+      flex: 1;
+      padding: 0.5rem 1rem;
+      border: none;
+      border-radius: 20px;
+      margin-right: 1rem;
+      background: #1e1e2e;
+      color: white;
+    }
+    .chat-input button {
+      padding: 0.5rem 1.5rem;
+      border: none;
+      border-radius: 20px;
+      background-color: #5b5bdc;
+      color: white;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .chat-input button:hover {
+      background-color: #6b6be6;
+    }
+    .login-screen {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #1e1e2e;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+    }
+    .login-screen input {
+      margin: 0.5rem;
+      padding: 0.5rem;
+      width: 220px;
+      border: none;
+      border-radius: 8px;
+      background: #2b2d42;
+      color: white;
+    }
+    .login-screen button {
+      padding: 0.5rem 1rem;
+      border: none;
+      border-radius: 8px;
+      background-color: #5b5bdc;
+      color: white;
+      margin-top: 0.5rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+<div id="login" class="login-screen">
+  <h2>Login</h2>
+  <input type="text" id="login-username" placeholder="Username" />
+  <input type="password" id="login-password" placeholder="Password" />
+  <button onclick="handleLogin()">Login</button>
+</div>
+
+<div id="app" style="display:none; width: 100%; height: 100%; display: flex;">
+  <div class="sidebar">
+    <h2>Conversations</h2>
+    <div id="conversation-list"></div>
+    <h2>Find User</h2>
+    <input type="text" id="search-user" placeholder="Search user..." oninput="searchUsers()" />
+    <div id="user-list"></div>
+  </div>
+  <div class="chat-container">
+    <div class="chat-header" id="chat-header">Select a conversation</div>
+    <div class="chat-messages" id="chat-messages"></div>
+    <div class="chat-input">
+      <input type="text" id="message-input" placeholder="Type a message..." />
+      <button onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let currentConversation = null;
+  let username = null;
+  let socket = null;
+
+  function handleLogin() {
+    const u = document.getElementById("login-username").value;
+    const p = document.getElementById("login-password").value;
+    fetch("http://localhost:8000/check_login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: u, password: p })
+    })
+    .then(res => {
+      if (res.ok) {
+        username = u;
+        document.getElementById("login").style.display = "none";
+        document.getElementById("app").style.display = "flex";
+        loadConversations();
+        openBackgroundSocket();
+      } else {
+        alert("Login failed");
+      }
+    });
+  }
+
+  function openBackgroundSocket() {
+    const bgSocket = new WebSocket(`ws://localhost:8000/ws/none/${username}`);
+    bgSocket.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === "new_conversation") {
+        loadConversations();
+      }
+    };
+  }
+
+  function loadConversations() {
+    fetch("http://localhost:8000/conversations?user=" + username)
+      .then(res => res.json())
+      .then(data => {
+        const list = document.getElementById("conversation-list");
+        list.innerHTML = "";
+        data.forEach(c => {
+          const item = document.createElement("div");
+          item.className = "conversation";
+          item.textContent = c.name;
+          item.onclick = () => openConversation(c.id, c.name);
+          list.appendChild(item);
+        });
+      });
+  }
+
+  function openConversation(convoId, convoName) {
+    currentConversation = convoId;
+    document.getElementById("chat-header").textContent = convoName;
+    document.getElementById("chat-messages").innerHTML = "";
+
+    if (socket) {
+      socket.close();
+    }
+
+    fetch(`http://localhost:8000/messages?conversation_id=${convoId}`)
+      .then(res => res.json())
+      .then(data => {
+        const msgBox = document.getElementById("chat-messages");
+        data.forEach(msg => {
+          const div = document.createElement("div");
+          div.className = "message";
+          if (msg.sender === username) {
+            div.classList.add("you");
+          }
+          div.textContent = `${msg.sender}: ${msg.message}`;
+          msgBox.appendChild(div);
+        });
+        msgBox.scrollTop = msgBox.scrollHeight;
+      });
+
+    socket = new WebSocket(`ws://localhost:8000/ws/${convoId}/${username}`);
+    socket.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === "new_conversation") {
+        loadConversations();
+      } else {
+        const msgBox = document.getElementById("chat-messages");
+        const div = document.createElement("div");
+        div.className = "message";
+        if (msg.sender === username) {
+          div.classList.add("you");
+        }
+        div.textContent = `${msg.sender}: ${msg.message}`;
+        msgBox.appendChild(div);
+        msgBox.scrollTop = msgBox.scrollHeight;
+      }
+    };
+  }
+
+  function sendMessage() {
+    const input = document.getElementById("message-input");
+    const text = input.value.trim();
+    if (!text || !socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({ message: text }));
+    input.value = "";
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const inputField = document.getElementById("message-input");
+    inputField.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+  });
+
+  function searchUsers() {
+    const keyword = document.getElementById("search-user").value;
+    fetch(`http://localhost:8000/search_users?keyword=${encodeURIComponent(keyword)}&exclude=${username}`)
+      .then(res => res.json())
+      .then(data => {
+        const list = document.getElementById("user-list");
+        list.innerHTML = "";
+        data.forEach(u => {
+          const item = document.createElement("div");
+          item.className = "user";
+          item.textContent = u.name + " (" + u.username + ")";
+          item.onclick = () => {
+            fetch("http://localhost:8000/start_conversation", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ user1: username, user2: u.username })
+            })
+            .then(res => res.json())
+            .then(data => {
+              openConversation(data.conversation_id, `${u.name} (${u.username})`);
+              loadConversations();
+            });
+          };
+          list.appendChild(item);
+        });
+      });
+  }
+</script>
+</body>
+</html>
