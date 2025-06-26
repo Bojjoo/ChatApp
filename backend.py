@@ -136,15 +136,27 @@ def get_conversations(user: str):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("""
-        SELECT c.conversation_id, c.conversation_name
+        SELECT 
+            c.conversation_id,
+            u2.username,
+            u2.name,
+            u2.avatar_url
         FROM conversations c
-        JOIN participants_conversation p ON c.conversation_id = p.conversation_id
-        JOIN users u ON u.user_id = p.user_id
-        WHERE u.username = %s
-    """, (user,))
+        JOIN participants_conversation p1 ON c.conversation_id = p1.conversation_id
+        JOIN users u1 ON p1.user_id = u1.user_id
+        JOIN participants_conversation p2 ON c.conversation_id = p2.conversation_id
+        JOIN users u2 ON p2.user_id = u2.user_id
+        WHERE u1.username = %s AND u2.username != %s
+    """, (user, user))
     rows = cur.fetchall()
     conn.close()
-    return [{"id": row[0], "name": row[1]} for row in rows]
+    return [{
+        "id": r[0],
+        "other_username": r[1],
+        "other_name": r[2],
+        "avatar_url": r[3]
+    } for r in rows]
+
 
 @app.get("/messages")
 def get_messages(conversation_id: str):
@@ -161,15 +173,9 @@ def get_messages(conversation_id: str):
     conn.close()
     return [{"sender": row[0], "message": row[1], "created_at": str(row[2])} for row in rows]
 
-@app.websocket("/ws/{conversation_id}/{username}")
-async def websocket_endpoint(websocket: WebSocket, conversation_id: str, username: str):
-    # Nếu conversation_id là 'none', thì chỉ dùng cho push notification
+@app.websocket("/ws/user/{username}")
+async def user_websocket(websocket: WebSocket, username: str):
     await websocket.accept()
-    if conversation_id != "none":
-        if conversation_id not in manager.active_conversations:
-            manager.active_conversations[conversation_id] = []
-        manager.active_conversations[conversation_id].append(websocket)
-
     if username not in manager.user_sockets:
         manager.user_sockets[username] = []
     manager.user_sockets[username].append(websocket)
@@ -177,27 +183,70 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str, usernam
     try:
         while True:
             data = await websocket.receive_json()
-            message_text = data.get("message")
-            if message_text and conversation_id != "none":
+            msg_type = data.get("type")
+            if msg_type == "chat":
+                conversation_id = data.get("conversation_id")
+                message_text = data.get("message")
+                if not conversation_id or not message_text:
+                    continue
+
                 conn = get_connection()
                 cur = conn.cursor()
+
+                # Lấy sender_id từ username
                 cur.execute("SELECT user_id FROM users WHERE username = %s", (username,))
                 sender_id = cur.fetchone()[0]
+
+                # Ghi vào bảng messages
                 cur.execute("""
                     INSERT INTO messages (conversation_id, sender_id, message_text, created_at)
                     VALUES (%s, %s, %s, %s)
                 """, (conversation_id, sender_id, message_text, datetime.datetime.now(datetime.timezone.utc)))
                 conn.commit()
+
+                # Lấy danh sách participant usernames (ngoại trừ chính người gửi)
+                cur.execute("""
+                    SELECT u.username, u.name
+                    FROM participants_conversation pc
+                    JOIN users u ON pc.user_id = u.user_id
+                    WHERE pc.conversation_id = %s
+                """, (conversation_id,))
+                rows = cur.fetchall()
+                participants = [r[0] for r in rows if r[0] != username]
+
+                # Tên cuộc trò chuyện, bạn có thể load từ DB nếu cần
+                conversation_name = f"Chat: {username}, {', '.join(participants)}"
+
                 conn.close()
 
-                await manager.broadcast_message(conversation_id, {
+                # Gửi đến các participant
+                for participant in participants:
+                    # Gửi tin nhắn
+                    await manager.notify_user(participant, {
+                        "type": "chat",
+                        "conversation_id": conversation_id,
+                        "sender": username,
+                        "message": message_text,
+                        "created_at": str(datetime.datetime.now())
+                    })
+
+                    # Gửi "new_conversation" để frontend load vào danh sách
+                    await manager.notify_user(participant, {
+                        "type": "new_conversation",
+                        "conversation_id": conversation_id,
+                        "conversation_name": conversation_name
+                    })
+
+                # Gửi tin nhắn về cho chính người gửi
+                await websocket.send_json({
+                    "type": "chat",
+                    "conversation_id": conversation_id,
                     "sender": username,
                     "message": message_text,
                     "created_at": str(datetime.datetime.now())
                 })
+
+
     except WebSocketDisconnect:
-        if conversation_id != "none":
-            if websocket in manager.active_conversations.get(conversation_id, []):
-                manager.active_conversations[conversation_id].remove(websocket)
         if websocket in manager.user_sockets.get(username, []):
             manager.user_sockets[username].remove(websocket)
