@@ -14,7 +14,8 @@ CREATE TABLE users(
     birth_date date not null,
     gender varchar(6) not null check(gender in ('Male', 'Female')),
     email VARCHAR(100) UNIQUE,
-    address text
+    address text,
+    avatar_url TEXT DEFAULT 'https://www.pngall.com/wp-content/uploads/12/Avatar-Profile-PNG-Image.png'
 );
 
 CREATE TABLE students(

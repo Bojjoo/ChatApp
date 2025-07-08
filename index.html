@@ -156,7 +156,7 @@
 </div>
 
 <script>
-  let username = null;
+  let userId = null;
   let userSocket = null;
   let currentConversation = null;
 
@@ -168,9 +168,11 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: u, password: p })
     })
-    .then(res => {
-      if (res.ok) {
-        username = u;
+    .then(res => res.json())
+    .then(data => {
+      if (data.success) {
+        userId = data.user_id;
+        sessionStorage.setItem("user_id", userId);
         document.getElementById("login").style.display = "none";
         document.getElementById("app").style.display = "flex";
         loadConversations();
@@ -178,11 +180,12 @@
       } else {
         alert("Login failed");
       }
-    });
+    })
+    .catch(() => alert("Login failed"));
   }
 
   function openUserSocket() {
-    userSocket = new WebSocket(`ws://localhost:8000/ws/user/${username}`);
+    userSocket = new WebSocket(`ws://localhost:8000/ws/user/${userId}`);
     userSocket.onmessage = (event) => {
       const msg = JSON.parse(event.data);
       if (msg.type === "new_conversation") {
@@ -194,11 +197,11 @@
           const wrapper = document.createElement("div");
           wrapper.style.display = "flex";
           wrapper.style.flexDirection = "column";
-          wrapper.style.alignItems = (msg.sender === username) ? "flex-end" : "flex-start";
+          wrapper.style.alignItems = (msg.sender === userId) ? "flex-end" : "flex-start";
 
           const messageDiv = document.createElement("div");
           messageDiv.className = "message";
-          if (msg.sender === username) messageDiv.classList.add("you");
+          if (msg.sender === userId) messageDiv.classList.add("you");
           messageDiv.textContent = msg.message;
 
           const timeDiv = document.createElement("div");
@@ -217,7 +220,7 @@
   }
 
   function loadConversations() {
-    fetch("http://localhost:8000/conversations?user=" + username)
+    fetch("http://localhost:8000/conversations?user=" + userId)
       .then(res => res.json())
       .then(data => {
         const list = document.getElementById("conversation-list");
@@ -260,11 +263,11 @@
           const wrapper = document.createElement("div");
           wrapper.style.display = "flex";
           wrapper.style.flexDirection = "column";
-          wrapper.style.alignItems = (msg.sender === username) ? "flex-end" : "flex-start";
+          wrapper.style.alignItems = (msg.sender === userId) ? "flex-end" : "flex-start";
 
           const messageDiv = document.createElement("div");
           messageDiv.className = "message";
-          if (msg.sender === username) messageDiv.classList.add("you");
+          if (msg.sender === userId) messageDiv.classList.add("you");
           messageDiv.textContent = msg.message;
 
           const timeDiv = document.createElement("div");
@@ -295,7 +298,7 @@
 
   function searchUsers() {
     const keyword = document.getElementById("search-user").value;
-    fetch(`http://localhost:8000/search_users?keyword=${encodeURIComponent(keyword)}&exclude=${username}`)
+    fetch(`http://localhost:8000/search_users?keyword=${encodeURIComponent(keyword)}&exclude=${userId}`)
       .then(res => res.json())
       .then(data => {
         const list = document.getElementById("user-list");
@@ -308,7 +311,7 @@
             fetch("http://localhost:8000/start_conversation", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ user1: username, user2: u.username })
+              body: JSON.stringify({ user1: userId, user2: u.user_id })
             })
             .then(res => res.json())
             .then(data => {
