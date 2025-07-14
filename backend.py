@@ -166,7 +166,7 @@ def get_messages(conversation_id: str):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("""
-        SELECT u.username, m.message_text, m.created_at
+        SELECT m.sender_id, m.message_text, m.created_at
         FROM messages m
         JOIN users u ON u.user_id = m.sender_id
         WHERE conversation_id = %s
